@@ -1,3 +1,17 @@
+// Package integration — attachment_test.go contains end-to-end integration
+// tests for the file attachment HTTP API.
+//
+// LEARNING: These tests demonstrate HTTP API testing in Go using:
+//
+//   - httptest.NewServer for running a real HTTP server
+//   - mime/multipart for constructing file upload requests
+//   - http.DefaultClient.Do for sending custom HTTP requests
+//   - Testing HTTP status codes and response bodies
+//   - Testing different content types and edge cases
+//
+// The mime/multipart package constructs the same multipart/form-data body
+// that a browser sends when submitting a <form> with <input type="file">.
+// Understanding multipart encoding is essential for building file upload APIs.
 package integration
 
 import (
@@ -13,6 +27,7 @@ import (
 	"whatsapp/store"
 )
 
+// AttachmentTestHelper provides a test server configured for attachment testing.
 type AttachmentTestHelper struct {
 	Store   *store.Store
 	Service *attachment.Service
@@ -20,6 +35,7 @@ type AttachmentTestHelper struct {
 	Server  *httptest.Server
 }
 
+// NewAttachmentTestHelper creates a fully wired test server for attachments.
 func NewAttachmentTestHelper() *AttachmentTestHelper {
 	s := store.NewStore()
 	svc := attachment.NewService(s)
@@ -39,10 +55,28 @@ func NewAttachmentTestHelper() *AttachmentTestHelper {
 	}
 }
 
+// Close shuts down the test server.
 func (th *AttachmentTestHelper) Close() {
 	th.Server.Close()
 }
 
+// TestAttachmentUploadDownload tests the complete upload-then-download cycle.
+//
+// LEARNING: Constructing a multipart file upload in Go:
+//
+//  1. Create a bytes.Buffer as the request body
+//  2. Create a multipart.Writer wrapping the buffer
+//  3. Call writer.CreateFormFile("fieldName", "filename") to add a file part
+//  4. Write file content to the returned io.Writer
+//  5. Close the writer (this writes the closing boundary)
+//  6. Set the request Content-Type to writer.FormDataContentType()
+//
+// writer.FormDataContentType() returns something like:
+//
+//	"multipart/form-data; boundary=abc123..."
+//
+// The boundary is a unique string that separates parts in the multipart body.
+// The multipart.Writer generates it automatically.
 func TestAttachmentUploadDownload(t *testing.T) {
 	th := NewAttachmentTestHelper()
 	defer th.Close()
@@ -63,6 +97,9 @@ func TestAttachmentUploadDownload(t *testing.T) {
 	req, _ := http.NewRequest("POST", th.Server.URL+"/attachments", &buf)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
+	// LEARNING: http.DefaultClient.Do(req) sends a custom HTTP request.
+	// It's more flexible than http.Get or http.Post because you can set
+	// any method, headers, and body. Always close resp.Body when done.
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Upload request failed: %v", err)
@@ -74,7 +111,9 @@ func TestAttachmentUploadDownload(t *testing.T) {
 		t.Fatalf("Expected status 201, got %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Parse response
+	// LEARNING: json.NewDecoder(resp.Body).Decode(&v) streams JSON from
+	// the response body into a struct. This is the standard way to parse
+	// JSON HTTP responses in Go.
 	var uploadResp attachment.UploadResponse
 	json.NewDecoder(resp.Body).Decode(&uploadResp)
 
@@ -88,7 +127,7 @@ func TestAttachmentUploadDownload(t *testing.T) {
 		t.Errorf("Expected size %d, got %d", len(testContent), uploadResp.Size)
 	}
 
-	// Download
+	// Download — http.Get is a convenience wrapper for simple GET requests
 	downloadResp, err := http.Get(th.Server.URL + "/attachments/" + uploadResp.ID)
 	if err != nil {
 		t.Fatalf("Download request failed: %v", err)
@@ -111,6 +150,8 @@ func TestAttachmentUploadDownload(t *testing.T) {
 	}
 }
 
+// TestAttachmentDownloadNotFound tests that downloading a non-existent
+// attachment returns 404.
 func TestAttachmentDownloadNotFound(t *testing.T) {
 	th := NewAttachmentTestHelper()
 	defer th.Close()
@@ -126,6 +167,7 @@ func TestAttachmentDownloadNotFound(t *testing.T) {
 	}
 }
 
+// TestAttachmentUploadNoFile tests that uploading without a file returns 400.
 func TestAttachmentUploadNoFile(t *testing.T) {
 	th := NewAttachmentTestHelper()
 	defer th.Close()
@@ -149,6 +191,18 @@ func TestAttachmentUploadNoFile(t *testing.T) {
 	}
 }
 
+// TestAttachmentUploadDifferentContentTypes tests uploading files with
+// various MIME types using a table-driven approach.
+//
+// LEARNING: This test uses "magic bytes" — the first few bytes of a file
+// that identify its format. For example:
+//   - JPEG files start with 0xFF 0xD8 0xFF
+//   - PNG files start with 0x89 0x50 0x4E 0x47 (which is ".PNG" in ASCII)
+//   - PDF files start with 0x25 0x50 0x44 0x46 (which is "%PDF" in ASCII)
+//
+// writer.CreatePart(headers) creates a multipart part with custom headers,
+// giving us control over both Content-Type and Content-Disposition. This is
+// more flexible than CreateFormFile, which uses default headers.
 func TestAttachmentUploadDifferentContentTypes(t *testing.T) {
 	th := NewAttachmentTestHelper()
 	defer th.Close()
@@ -200,6 +254,12 @@ func TestAttachmentUploadDifferentContentTypes(t *testing.T) {
 	}
 }
 
+// TestAttachmentMethodNotAllowed tests that wrong HTTP methods return 405.
+//
+// LEARNING: Testing HTTP method restrictions is important for API correctness.
+// HTTP 405 Method Not Allowed means the endpoint exists but doesn't support
+// the requested method. This is different from 404 Not Found (endpoint
+// doesn't exist) and 400 Bad Request (request was malformed).
 func TestAttachmentMethodNotAllowed(t *testing.T) {
 	th := NewAttachmentTestHelper()
 	defer th.Close()
@@ -223,6 +283,7 @@ func TestAttachmentMethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestAttachmentUploadTooLarge tests the file size limit enforcement.
 func TestAttachmentUploadTooLarge(t *testing.T) {
 	th := NewAttachmentTestHelper()
 	defer th.Close()
@@ -237,6 +298,8 @@ func TestAttachmentUploadTooLarge(t *testing.T) {
 	}
 }
 
+// TestAttachmentGetOnUploadEndpoint tests that GET on the upload endpoint
+// returns 405 Method Not Allowed.
 func TestAttachmentGetOnUploadEndpoint(t *testing.T) {
 	th := NewAttachmentTestHelper()
 	defer th.Close()

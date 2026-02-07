@@ -1,3 +1,25 @@
+// Package integration contains end-to-end integration tests for the
+// WebSocket messaging server.
+//
+// LEARNING: Integration tests differ from unit tests in several ways:
+//
+//   - They test multiple components working together (handler + service + store)
+//   - They use real HTTP servers (via httptest.NewServer)
+//   - They make actual WebSocket connections
+//   - They test the full request/response cycle
+//   - They're slower than unit tests and typically live in a separate package
+//
+// Go's net/http/httptest package provides httptest.NewServer, which starts
+// a real HTTP server on a random port. This is lightweight enough for testing
+// but behaves exactly like a production server — including TCP connections,
+// HTTP parsing, and WebSocket upgrades.
+//
+// Key patterns demonstrated:
+//   - Test helpers (reusable setup/teardown structs)
+//   - httptest.NewServer for integration testing
+//   - WebSocket client connections in tests
+//   - Read deadlines to prevent tests from hanging
+//   - defer for cleanup (server.Close(), conn.Close())
 package integration
 
 import (
@@ -15,7 +37,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TestHelper provides common test functionality
+// TestHelper provides common test functionality for WebSocket integration tests.
+//
+// LEARNING: Test helpers encapsulate setup and teardown logic that would
+// otherwise be duplicated in every test. Exported fields (Store, Service, etc.)
+// let individual tests access internal state for assertions.
+//
+// The pattern is: create helper → run test → defer helper.Close()
 type TestHelper struct {
 	Store   *store.Store
 	Service *chat.Service
@@ -23,6 +51,12 @@ type TestHelper struct {
 	Server  *httptest.Server
 }
 
+// NewTestHelper creates a fully wired test server.
+//
+// LEARNING: httptest.NewServer(handler) starts a real HTTP server on localhost
+// with a random available port. Server.URL contains the base URL (e.g.,
+// "http://127.0.0.1:54321"). The server runs in the background and must
+// be closed when done (via defer th.Close()).
 func NewTestHelper() *TestHelper {
 	s := store.NewStore()
 	svc := chat.NewService(s)
@@ -41,16 +75,28 @@ func NewTestHelper() *TestHelper {
 	}
 }
 
+// Close shuts down the test server and releases its port.
 func (th *TestHelper) Close() {
 	th.Server.Close()
 }
 
+// ConnectWS establishes a WebSocket connection to the test server.
+//
+// LEARNING: The URL transformation "ws" + TrimPrefix(URL, "http") converts
+// "http://127.0.0.1:54321" to "ws://127.0.0.1:54321/ws". The WebSocket
+// protocol uses "ws://" (or "wss://" for TLS) instead of "http://".
 func (th *TestHelper) ConnectWS() (*websocket.Conn, error) {
 	wsURL := "ws" + strings.TrimPrefix(th.Server.URL, "http") + "/ws"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	return conn, err
 }
 
+// readEvent reads the next WebSocket event with a 5-second timeout.
+//
+// LEARNING: SetReadDeadline prevents tests from hanging indefinitely if the
+// server doesn't send an expected event. Without a deadline, ReadMessage
+// blocks forever. The 5-second timeout is generous enough for test servers
+// but catches stuck tests quickly.
 func readEvent(conn *websocket.Conn) (*model.WSEvent, error) {
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, message, err := conn.ReadMessage()
@@ -64,6 +110,11 @@ func readEvent(conn *websocket.Conn) (*model.WSEvent, error) {
 	return &event, nil
 }
 
+// sendCommand sends a typed WebSocket command to the server.
+//
+// LEARNING: This helper marshals the payload to json.RawMessage before
+// wrapping it in a WSCommand. This matches the server's expected format
+// where Payload is raw JSON bytes, not a pre-marshaled object.
 func sendCommand(conn *websocket.Conn, cmdType string, payload interface{}) error {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -76,6 +127,8 @@ func sendCommand(conn *websocket.Conn, cmdType string, payload interface{}) erro
 	return conn.WriteJSON(cmd)
 }
 
+// TestWebSocketConnection tests the basic connection flow:
+// connect → receive "connected" event with userID and clientID.
 func TestWebSocketConnection(t *testing.T) {
 	th := NewTestHelper()
 	defer th.Close()
@@ -96,7 +149,11 @@ func TestWebSocketConnection(t *testing.T) {
 		t.Errorf("Expected 'connected' event, got '%s'", event.Type)
 	}
 
-	// Extract user ID from payload
+	// LEARNING: Event payloads arrive as interface{} (from json.Unmarshal
+	// into WSEvent). To access specific fields, we re-marshal to bytes
+	// then unmarshal into the expected payload type. This round-trip is
+	// necessary because json.Unmarshal puts map[string]interface{} behind
+	// the interface{}, not a ConnectedPayload struct.
 	payloadBytes, _ := json.Marshal(event.Payload)
 	var connPayload model.ConnectedPayload
 	json.Unmarshal(payloadBytes, &connPayload)
@@ -109,6 +166,16 @@ func TestWebSocketConnection(t *testing.T) {
 	}
 }
 
+// TestCreateChatAndSendMessage tests the full messaging flow:
+// two users connect → create chat → send message → verify delivery.
+//
+// LEARNING: This is a true end-to-end test. It verifies that:
+//  1. Two WebSocket clients can connect simultaneously
+//  2. Creating a chat notifies all participants
+//  3. Sending a message delivers it to the other participant
+//  4. Message content and sender are preserved correctly
+//
+// The test acts as both user1 and user2, simulating real client behavior.
 func TestCreateChatAndSendMessage(t *testing.T) {
 	th := NewTestHelper()
 	defer th.Close()
@@ -190,6 +257,7 @@ func TestCreateChatAndSendMessage(t *testing.T) {
 	}
 }
 
+// TestOfflineMessageQueue tests the inbox mechanism for offline message delivery.
 func TestOfflineMessageQueue(t *testing.T) {
 	th := NewTestHelper()
 	defer th.Close()
@@ -230,6 +298,7 @@ func TestOfflineMessageQueue(t *testing.T) {
 	t.Log("Offline queue test passed - inbox mechanism verified")
 }
 
+// TestMessageAcknowledge tests the message acknowledgment flow.
 func TestMessageAcknowledge(t *testing.T) {
 	th := NewTestHelper()
 	defer th.Close()
@@ -274,6 +343,7 @@ func TestMessageAcknowledge(t *testing.T) {
 	}
 }
 
+// TestConnectionReplacement tests that reconnecting replaces the old connection.
 func TestConnectionReplacement(t *testing.T) {
 	th := NewTestHelper()
 	defer th.Close()
@@ -307,6 +377,7 @@ func TestConnectionReplacement(t *testing.T) {
 	}
 }
 
+// TestModifyParticipants tests adding participants via WebSocket commands.
 func TestModifyParticipants(t *testing.T) {
 	th := NewTestHelper()
 	defer th.Close()
@@ -374,6 +445,8 @@ func TestModifyParticipants(t *testing.T) {
 	}
 }
 
+// TestErrorHandling tests that the server responds with error events for
+// invalid operations.
 func TestErrorHandling(t *testing.T) {
 	th := NewTestHelper()
 	defer th.Close()
@@ -401,6 +474,7 @@ func TestErrorHandling(t *testing.T) {
 	}
 }
 
+// TestInvalidCommand tests that unknown command types return an error event.
 func TestInvalidCommand(t *testing.T) {
 	th := NewTestHelper()
 	defer th.Close()
