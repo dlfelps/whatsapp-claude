@@ -1,3 +1,18 @@
+// Package attachment — service_test.go contains unit tests for the
+// attachment service.
+//
+// LEARNING: This file demonstrates the "table-driven test" pattern, one of
+// Go's most important testing idioms. Table-driven tests use a slice of
+// test cases, each with inputs and expected outputs, then loop over them
+// calling t.Run() for each case. Benefits:
+//
+//   - Easy to add new test cases (just add a struct to the slice)
+//   - Each case gets its own subtest name in output
+//   - DRY — shared test logic isn't duplicated
+//   - Failing subtests are individually identifiable
+//
+// Run table-driven tests: go test -run TestUpload_VariousContentTypes
+// Run a specific subtest: go test -run TestUpload_VariousContentTypes/image/jpeg
 package attachment
 
 import (
@@ -6,6 +21,7 @@ import (
 	"whatsapp/store"
 )
 
+// TestUpload tests basic file upload functionality.
 func TestUpload(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -30,6 +46,8 @@ func TestUpload(t *testing.T) {
 	}
 }
 
+// TestUpload_EmptyContentType tests that an empty content type defaults
+// to "application/octet-stream".
 func TestUpload_EmptyContentType(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -45,6 +63,12 @@ func TestUpload_EmptyContentType(t *testing.T) {
 	}
 }
 
+// TestUpload_TooLarge tests that files exceeding the size limit are rejected.
+//
+// LEARNING: make([]byte, N) creates a byte slice of length N, filled with
+// zero bytes. This is an efficient way to create test data of a specific
+// size without caring about the content. The +1 ensures we're exactly one
+// byte over the limit — testing boundary conditions precisely.
 func TestUpload_TooLarge(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -57,6 +81,11 @@ func TestUpload_TooLarge(t *testing.T) {
 	}
 }
 
+// TestUpload_ExactlyMaxSize tests that files exactly at the size limit succeed.
+//
+// LEARNING: Boundary testing is critical. This test verifies that the size
+// check uses > (greater than) not >= (greater than or equal), allowing files
+// at exactly the maximum size. Off-by-one errors are common bugs.
 func TestUpload_ExactlyMaxSize(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -73,6 +102,7 @@ func TestUpload_ExactlyMaxSize(t *testing.T) {
 	}
 }
 
+// TestGet tests retrieving an uploaded attachment.
 func TestGet(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -92,6 +122,7 @@ func TestGet(t *testing.T) {
 	}
 }
 
+// TestGet_NotFound tests retrieving a non-existent attachment.
 func TestGet_NotFound(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -102,6 +133,26 @@ func TestGet_NotFound(t *testing.T) {
 	}
 }
 
+// TestUpload_VariousContentTypes tests uploading files with different MIME types.
+//
+// LEARNING: This is a "table-driven test" — the most idiomatic Go testing
+// pattern. The structure is:
+//
+//  1. Define a slice of anonymous structs, each representing a test case.
+//     Each struct has fields for inputs and expected outputs.
+//
+//  2. Loop over the test cases with range.
+//
+//  3. Use t.Run(name, func(t *testing.T) {...}) to create a subtest for
+//     each case. Subtests:
+//     - Appear individually in test output: "TestUpload.../image/jpeg"
+//     - Can be run individually: go test -run "VariousContentTypes/image"
+//     - Have their own t, so t.Fatalf only stops that subtest
+//     - Run sequentially by default, but can be parallelized with t.Parallel()
+//
+// The anonymous struct syntax `[]struct{ field1 Type1; field2 Type2 }{...}`
+// defines the struct and its values inline. This avoids creating a named
+// type that's only used in one place.
 func TestUpload_VariousContentTypes(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)

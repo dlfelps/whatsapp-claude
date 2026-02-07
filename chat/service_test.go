@@ -1,3 +1,17 @@
+// Package chat — service_test.go contains unit tests for the chat service.
+//
+// LEARNING: Go has built-in testing support via the "testing" package. Key rules:
+//   - Test files must end with _test.go (e.g., service_test.go)
+//   - Test functions must start with "Test" and accept *testing.T
+//   - Test files live alongside the code they test (same package)
+//   - Run tests with: go test ./chat/ (or go test ./... for all packages)
+//
+// This file demonstrates:
+//   - Basic unit test structure (arrange → act → assert)
+//   - Testing both happy paths and error cases
+//   - Sentinel error comparison for validating error conditions
+//   - t.Fatalf vs t.Errorf (stop vs continue on failure)
+//   - Testing idempotent operations
 package chat
 
 import (
@@ -7,6 +21,16 @@ import (
 	"whatsapp/store"
 )
 
+// TestCreateChat tests the basic chat creation flow.
+//
+// LEARNING: The standard test structure in Go follows "arrange, act, assert":
+//  1. Arrange: Set up dependencies (store, service)
+//  2. Act: Call the function under test
+//  3. Assert: Check the results with t.Fatalf/t.Errorf
+//
+// t.Fatalf stops the test immediately — use it when a failure makes subsequent
+// checks meaningless (e.g., if CreateChat returns nil, checking chat.Name panics).
+// t.Errorf logs the failure but continues — use it for non-fatal checks.
 func TestCreateChat(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -34,6 +58,14 @@ func TestCreateChat(t *testing.T) {
 	}
 }
 
+// TestCreateChat_MaxParticipants tests the participant limit enforcement.
+//
+// LEARNING: Test naming convention in Go uses underscores to describe the
+// scenario: TestFunctionName_Scenario. This makes test output readable:
+//   --- FAIL: TestCreateChat_MaxParticipants
+//
+// Testing boundary conditions (max, min, zero, empty) is crucial. Here we
+// test that exceeding MaxParticipants returns the correct sentinel error.
 func TestCreateChat_MaxParticipants(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -50,6 +82,12 @@ func TestCreateChat_MaxParticipants(t *testing.T) {
 	}
 }
 
+// TestSendMessage tests basic message sending.
+//
+// LEARNING: Tests often need to set up prerequisite state. Here we create
+// a chat before sending a message to it. The underscore _ discards the
+// error return from CreateChat because we trust it works (it's tested
+// separately). This keeps the test focused on the function being tested.
 func TestSendMessage(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -71,6 +109,12 @@ func TestSendMessage(t *testing.T) {
 	}
 }
 
+// TestSendMessage_NotParticipant tests that non-participants can't send messages.
+//
+// LEARNING: Testing error cases is just as important as testing happy paths.
+// Here we verify that the service correctly rejects a message from a user
+// who isn't in the chat. We compare the returned error against the sentinel
+// error ErrNotParticipant directly with ==.
 func TestSendMessage_NotParticipant(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -85,6 +129,7 @@ func TestSendMessage_NotParticipant(t *testing.T) {
 	}
 }
 
+// TestSendMessage_ChatNotFound tests sending to a non-existent chat.
 func TestSendMessage_ChatNotFound(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -95,6 +140,7 @@ func TestSendMessage_ChatNotFound(t *testing.T) {
 	}
 }
 
+// TestSendMessage_WithAttachments tests sending a message with file attachments.
 func TestSendMessage_WithAttachments(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -117,6 +163,8 @@ func TestSendMessage_WithAttachments(t *testing.T) {
 	}
 }
 
+// TestSendMessage_AttachmentNotFound tests that referencing a non-existent
+// attachment is rejected.
 func TestSendMessage_AttachmentNotFound(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -131,6 +179,7 @@ func TestSendMessage_AttachmentNotFound(t *testing.T) {
 	}
 }
 
+// TestModifyParticipants_Add tests adding participants to a chat.
 func TestModifyParticipants_Add(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -156,6 +205,7 @@ func TestModifyParticipants_Add(t *testing.T) {
 	}
 }
 
+// TestModifyParticipants_Remove tests removing participants from a chat.
 func TestModifyParticipants_Remove(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -176,6 +226,8 @@ func TestModifyParticipants_Remove(t *testing.T) {
 	}
 }
 
+// TestModifyParticipants_CannotRemoveSelf tests that users can't remove
+// themselves from a chat.
 func TestModifyParticipants_CannotRemoveSelf(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -190,6 +242,8 @@ func TestModifyParticipants_CannotRemoveSelf(t *testing.T) {
 	}
 }
 
+// TestModifyParticipants_NotParticipant tests that non-participants can't
+// modify the participant list.
 func TestModifyParticipants_NotParticipant(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -204,6 +258,7 @@ func TestModifyParticipants_NotParticipant(t *testing.T) {
 	}
 }
 
+// TestModifyParticipants_InvalidAction tests that invalid actions are rejected.
 func TestModifyParticipants_InvalidAction(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -218,6 +273,8 @@ func TestModifyParticipants_InvalidAction(t *testing.T) {
 	}
 }
 
+// TestModifyParticipants_ExceedsMax tests that adding participants beyond
+// the maximum is rejected.
 func TestModifyParticipants_ExceedsMax(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -240,6 +297,11 @@ func TestModifyParticipants_ExceedsMax(t *testing.T) {
 	}
 }
 
+// TestAcknowledgeMessage tests message acknowledgment and idempotency.
+//
+// LEARNING: Testing idempotency means verifying that calling the same
+// operation twice produces the same result without errors. This is critical
+// for operations that may be retried due to network failures.
 func TestAcknowledgeMessage(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)
@@ -267,6 +329,7 @@ func TestAcknowledgeMessage(t *testing.T) {
 	}
 }
 
+// TestGetChatParticipants tests retrieving the participant list for a chat.
 func TestGetChatParticipants(t *testing.T) {
 	s := store.NewStore()
 	svc := NewService(s)

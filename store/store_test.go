@@ -1,3 +1,17 @@
+// Package store — store_test.go contains unit tests for the in-memory store,
+// including concurrent access testing.
+//
+// LEARNING: This file demonstrates several important Go testing patterns:
+//
+//   - Testing CRUD operations (Create, Read, Update, Delete)
+//   - Verifying error conditions (duplicate keys, not found)
+//   - Concurrent access testing with sync.WaitGroup and goroutines
+//   - Testing with the -race flag: go test -race ./store/
+//
+// The -race flag enables Go's built-in race detector, which instruments
+// memory accesses at compile time and reports data races at runtime.
+// It's essential for testing concurrent code — always run "go test -race"
+// before shipping concurrent code.
 package store
 
 import (
@@ -10,6 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// TestNewStore verifies that the constructor returns a non-nil store.
 func TestNewStore(t *testing.T) {
 	s := NewStore()
 	if s == nil {
@@ -17,6 +32,18 @@ func TestNewStore(t *testing.T) {
 	}
 }
 
+// TestUserCRUD tests the complete user lifecycle: create, read, and
+// error handling for duplicates and missing users.
+//
+// LEARNING: Testing all CRUD operations in one test function is acceptable
+// when the operations are closely related and the test is readable. Each
+// section tests a different aspect: success, duplicate error, not found error.
+//
+// t.Fatal vs t.Error:
+//   - t.Fatal/t.Fatalf: Stops the test immediately (use when failure makes
+//     subsequent checks meaningless or would panic)
+//   - t.Error/t.Errorf: Records the failure but continues (use for independent
+//     checks where other assertions are still valid)
 func TestUserCRUD(t *testing.T) {
 	s := NewStore()
 
@@ -49,6 +76,8 @@ func TestUserCRUD(t *testing.T) {
 	}
 }
 
+// TestGetOrCreateUser tests the upsert behavior — creating new users and
+// returning existing ones.
 func TestGetOrCreateUser(t *testing.T) {
 	s := NewStore()
 
@@ -68,6 +97,7 @@ func TestGetOrCreateUser(t *testing.T) {
 	}
 }
 
+// TestChatCRUD tests chat creation, retrieval, and update operations.
 func TestChatCRUD(t *testing.T) {
 	s := NewStore()
 
@@ -111,6 +141,7 @@ func TestChatCRUD(t *testing.T) {
 	}
 }
 
+// TestMessageCRUD tests message creation and retrieval.
 func TestMessageCRUD(t *testing.T) {
 	s := NewStore()
 
@@ -137,6 +168,15 @@ func TestMessageCRUD(t *testing.T) {
 	}
 }
 
+// TestClientRegistration tests client registration, replacement, and
+// unregistration — including the safety check that prevents stale goroutines
+// from unregistering newer connections.
+//
+// LEARNING: &websocket.Conn{} creates a zero-valued WebSocket connection.
+// This works for testing the store's registration logic without needing
+// a real WebSocket server, because the store only cares about pointer
+// identity and ClientID — it never calls methods on the connection.
+// This is a lightweight alternative to mocking.
 func TestClientRegistration(t *testing.T) {
 	s := NewStore()
 
@@ -198,6 +238,7 @@ func TestClientRegistration(t *testing.T) {
 	}
 }
 
+// TestAttachmentCRUD tests attachment creation and retrieval.
 func TestAttachmentCRUD(t *testing.T) {
 	s := NewStore()
 
@@ -224,6 +265,7 @@ func TestAttachmentCRUD(t *testing.T) {
 	}
 }
 
+// TestInboxOperations tests the inbox lifecycle: add, get, remove, and clear.
 func TestInboxOperations(t *testing.T) {
 	s := NewStore()
 
@@ -265,6 +307,7 @@ func TestInboxOperations(t *testing.T) {
 	}
 }
 
+// TestPurgeExpiredInboxEntries tests TTL-based purging of inbox entries.
 func TestPurgeExpiredInboxEntries(t *testing.T) {
 	s := NewStore()
 
@@ -290,6 +333,28 @@ func TestPurgeExpiredInboxEntries(t *testing.T) {
 	}
 }
 
+// TestConcurrentAccess tests that the store handles concurrent goroutine
+// access safely without data races.
+//
+// LEARNING: sync.WaitGroup is Go's mechanism for waiting on multiple
+// goroutines to finish. The pattern is:
+//
+//	var wg sync.WaitGroup
+//	for i := 0; i < n; i++ {
+//	    wg.Add(1)           // Increment counter before launching goroutine
+//	    go func() {
+//	        defer wg.Done() // Decrement counter when goroutine finishes
+//	        // ... do work
+//	    }()
+//	}
+//	wg.Wait()               // Block until counter reaches zero
+//
+// wg.Add(1) MUST be called before "go func()" — if called inside the
+// goroutine, there's a race between the goroutine starting and Wait()
+// being called.
+//
+// Run this test with the race detector: go test -race ./store/
+// The race detector will catch any unprotected concurrent map access.
 func TestConcurrentAccess(t *testing.T) {
 	s := NewStore()
 
